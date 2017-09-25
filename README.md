@@ -5,6 +5,7 @@
 win-security-cli.exe p
 ```
 returns 0 if the user doesn't have any password on his desktop
+
 returns 1 if the user have a passwordp on his desktop
 
 ## Encrypt - Encrypts stdIn data using Windows DPAPI
