@@ -1,5 +1,6 @@
 
 using System;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Security.Principal;
@@ -11,6 +12,8 @@ using System.Text;
 
 namespace dpapi_cli {
     class Program {
+
+        const int INPUT_STREAM_SIZE = 800 * 1024;
 
         [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
         public static extern bool LogonUser(String lpszUsername, String lpszDomain, String lpszPassword,
@@ -26,13 +29,10 @@ namespace dpapi_cli {
             userName = Environment.UserName;
 
             const int LOGON32_PROVIDER_DEFAULT = 0;
-            //This parameter causes LogonUser to create a primary token.
             const int LOGON32_LOGON_INTERACTIVE = 2;
 
             // Call LogonUser to obtain a handle to an access token.
-            bool loginSuccess = LogonUser(userName, null, "",
-                LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT,
-                out tokenHandle);
+            bool loginSuccess = LogonUser(userName, null, "", LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, out tokenHandle);
 
             if(tokenHandle != IntPtr.Zero) {
                 CloseHandle(tokenHandle);
@@ -48,52 +48,69 @@ namespace dpapi_cli {
             }
         }
 
-        private static string Encrypt() {
-            var inputString = Console.ReadLine();
-            var encryptedBytes = ProtectedData.Protect(Encoding.Unicode.GetBytes(inputString), null, DataProtectionScope.CurrentUser);
-
-            var encodedString = Convert.ToBase64String(encryptedBytes);
-
-            return encodedString;
+        private static string ReadFullInput() {
+            Stream inputStream = Console.OpenStandardInput(INPUT_STREAM_SIZE);
+            byte[] bytes = new byte[INPUT_STREAM_SIZE];
+            int length = inputStream.Read(bytes, 0, INPUT_STREAM_SIZE);
+            
+            return Encoding.UTF8.GetString(bytes, 0, length);
         }
 
-        private static string Decrypt() {
-            var rawString = Console.ReadLine();
+        private static string Encrypt(byte[] entropy) {
+            var inputString = ReadFullInput();
+            var encryptedBytes = ProtectedData.Protect(Encoding.Unicode.GetBytes(inputString), entropy, DataProtectionScope.CurrentUser);
+
+            return Convert.ToBase64String(encryptedBytes);
+        }
+
+        private static string Decrypt(byte[] entropy) {
+            string rawString = ReadFullInput();
+
             var encryptedBytes = Convert.FromBase64String(rawString);
-            var rawBytes = ProtectedData.Unprotect(encryptedBytes, null, DataProtectionScope.CurrentUser);
-
-            return Encoding.Unicode.GetString(rawBytes);
+            var rawBytes = ProtectedData.Unprotect(encryptedBytes, entropy, DataProtectionScope.CurrentUser);
+            return Encoding.Unicode.GetString(rawBytes, 0, rawBytes.Length);
         }
 
-        private static void Error(string msg) {
+        private static void Error(string msg , Exception ex) {
+            if (ex != null) {
+                Console.WriteLine(ex.ToString());
+            }
             Console.WriteLine(msg);
             Environment.Exit(1);
         }
 
         static void Main(string[] args) {
+            string output = "Invalid Flag. Use 'd' for decryption, 'e' for encryption and 'p' to check if current user has a password set";
+            byte[] entropy = null;
 
-            string output = "Invalid Flag. Use 'd' for decryption or 'e' for encryption";
+            if (args.Length < 1 || args.Length > 2) {
+                Error("Invalid number of arguments.", null);
+            }
 
-            if (args.Length != 1) {
-                Error("Invalid number of arguments.");
+            if (args.Length == 2) {
+                try {
+                    entropy = Convert.FromBase64String(args[1]);                
+                } catch {
+                    Error("Invalid base64 entropy", null);
+                }
             }
 
             switch(args[0]) {
                 case "e":
 
                     try {
-                        output = Encrypt();
+                        output = Encrypt(entropy);
                     } catch {
-                        Error("Encryption error.");
+                        Error("Encryption error.", null);
                     }
 
                     break;
 
                 case "d":
                     try {
-                        output = Decrypt();
-                    } catch {
-                        Error("Decryption Error.");
+                        output = Decrypt(entropy);
+                    } catch (Exception e) {
+                        Error("Decryption Error.", e);
                     }
                     break;
 
@@ -101,7 +118,7 @@ namespace dpapi_cli {
                     try {
                         output = pCheck();
                     } catch {
-                        Error("Password check error");
+                        Error("Password check error", null);
                     }
                     break;
             }
